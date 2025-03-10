@@ -1,7 +1,0 @@
-<launch>
-
-		<node pkg="pipehuben" name="test" type="Task7.py" output="screen"/>
-		
-        <node pkg="pipehuben" name="service_find" type="TaskService.py" output="screen"/>
-	
-</launch>
