@@ -1,0 +1,19 @@
+{
+    "order": 2, 
+    "robot_pose": {
+        "pos_z": 0.24510954320430756, 
+        "pos_x": -30.164230346679688, 
+        "pos_y": -3.559866189956665, 
+        "ori_x": 0.009935304132214912, 
+        "ori_y": -0.0008581864119076328, 
+        "ori_z": 0.9264240085272227, 
+        "ori_w": -0.37634971724744953
+    }, 
+    "option": {
+        "crawl": false, 
+        "up_stair": false, 
+        "speed_up": false, 
+        "down_stair": false, 
+        "autocharge": false
+    }
+}

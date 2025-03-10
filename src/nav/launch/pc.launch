@@ -1,0 +1,18 @@
+<launch>
+  <arg name="robot_type" default="MINI" />
+  <arg name="enable_rviz" default="true" />
+
+  <!-- MINI 参数 -->
+  <group if="$(eval arg('robot_type') == 'MINI')">
+    <!-- URDF -->
+    <group if="$(arg enable_rviz)">
+      <param name="robot_description" textfile="$(find mini)/urdf/mini.urdf" />
+      <node name="robot_state_publisher" pkg="robot_state_publisher" type="state_publisher" />
+    </group>
+  </group>
+
+  <!-- RViz -->
+  <group if="$(arg enable_rviz)">
+    <node name="navigation_rviz" pkg="rviz" type="rviz" args=" -d $(find nav)/rviz/nav.rviz" output="screen" />
+  </group>
+</launch>
