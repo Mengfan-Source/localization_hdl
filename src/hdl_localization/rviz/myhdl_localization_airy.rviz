@@ -7,8 +7,10 @@ Panels:
         - /Global Options1
         - /Status1
         - /TF1/Frames1
+        - /PointCloud21
         - /Odometry1/Shape1
         - /MarkerArray1/Namespaces1
+        - /PointCloud26
       Splitter Ratio: 0.5
     Tree Height: 792
   - Class: rviz/Selection
@@ -61,6 +63,10 @@ Visualization Manager:
       Frame Timeout: 50
       Frames:
         All Enabled: false
+        map:
+          Value: true
+        rslidar:
+          Value: true
       Marker Alpha: 1
       Marker Scale: 5
       Name: TF
@@ -68,14 +74,16 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Tree:
-        {}
+        map:
+          rslidar:
+            {}
       Update Interval: 0
       Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 49.997802734375
-        Min Value: -48.02833557128906
+        Max Value: 3.700284481048584
+        Min Value: -4.058869361877441
         Value: true
       Axis: Z
       Channel Name: z
@@ -92,7 +100,7 @@ Visualization Manager:
       Queue Size: 10
       Selectable: true
       Size (Pixels): 1
-      Size (m): 0.05000000074505806
+      Size (m): 0.019999999552965164
       Style: Squares
       Topic: /globalmap
       Unreliable: false
@@ -291,7 +299,7 @@ Visualization Manager:
       Queue Size: 10
       Selectable: true
       Size (Pixels): 3
-      Size (m): 0.10000000149011612
+      Size (m): 0.05000000074505806
       Style: Flat Squares
       Topic: /livox_points_transformed
       Unreliable: false
@@ -326,7 +334,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 346.47503662109375
+      Distance: 20.745513916015625
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -334,9 +342,9 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: -26.072416305541992
-        Y: -152.63624572753906
-        Z: -9.600936889648438
+        X: 1.3557347059249878
+        Y: -1.1279584169387817
+        Z: -3.0128419399261475
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
@@ -344,7 +352,7 @@ Visualization Manager:
       Near Clip Distance: 0.009999999776482582
       Pitch: 1.5697963237762451
       Target Frame: <Fixed Frame>
-      Yaw: 6.226616382598877
+      Yaw: 3.306617259979248
     Saved: ~
 Window Geometry:
   Displays:

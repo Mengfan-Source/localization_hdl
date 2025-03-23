@@ -3,19 +3,17 @@
         <param name="/use_sim_time" value="true" />
         <!-- arguments -->
         <arg name="nodelet_manager" default="cetc_hdl_nodelet_manager" />
-        <arg name="points_topic" default="/lidar_points" />
+        <arg name="points_topic" default="/rslidar_points" />
         <!-- input clouds are transformed in odom_child_frame, and then localization is performed in that frame -->
         <!-- this is useful to match the LIDAR and IMU coodinate systems -->
-        <arg name="odom_child_frame_id" default="imu_link" />
+        <arg name="odom_child_frame_id" default="rslidar" />
         <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="base_laser_tf_broadcaster" args="0.243 0 0.058 0 0 0 base_link velodyne" /> -->
-        <!-- 在imu_link下lidar_link的位姿 -->
-        <node pkg="tf2_ros" type="static_transform_publisher" name="base_laser_tf_broadcaster" args="-0.08715 0.001 -0.117 0 0 0 imu_link lidar_link" />
         <!-- optional arguments -->
         <arg name="use_imu" default="true" />
         <arg name="invert_imu_acc" default="false" />
         <arg name="invert_imu_gyro" default="false" />
         <arg name="use_global_localization" default="false" />
-        <arg name="imu_topic" default="/imu/data" />
+        <arg name="imu_topic" default="/rslidar_imu_data" />
         <arg name="enable_robot_odometry_prediction" value="false" />
         <arg name="robot_odom_frame_id" value="odom" />
         <arg name="plot_estimation_errors" value="false" />
@@ -30,14 +28,9 @@
 
         <!-- globalmap_server_nodelet $(find hdl_localization)/data/cloudGlobal.pcd-->
         <node pkg="nodelet" type="nodelet" name="globalmap_server_nodelet" args="load hdl_localization/GlobalmapServerNodelet $(arg nodelet_manager)">
-                <!--   <param name="globalmap_pcd" value="/home/xmf/WorkPlaces/catkin_ws/map/map.pcd" />-->
-                <!--<param name="globalmap_pcd" value="/home/cetc21/xmf/catkin_ws/fastlio2/src/PCD/scanszheng.pcd" />-->
-                <!-- <param name="globalmap_pcd" value="/home/xmf/xmf_slam/slam_test/log/scans_filted.pcd" /> -->
-                <param name="globalmap_pcd" value="/home/xmf/xmf_catkin_ws/FASTLIO2_SAM_LC/map/map_filted.pcd" />
+                <param name="globalmap_pcd" value="/home/xmf/xmf_slam/fast_lio_ws/src/PCD/scans_filted_0.1.pcd" />
                 <param name="convert_utm_to_local" value="true" />
-                <param name="downsample_resolution" value="0.2" />
-                <!-- 0.2-->
-                <!-- 0.05-->
+                <param name="downsample_resolution" value="0.1" />
         </node>
 
         <!-- hdl_localization_nodelet -->
@@ -62,7 +55,7 @@
                 <param name="ndt_neighbor_search_method" value="DIRECT1" />
                 <param name="ndt_neighbor_search_radius" value="1.0" />
                 <param name="ndt_resolution" value="1.0" />
-                <param name="downsample_resolution" value="0.2" />
+                <param name="downsample_resolution" value="0.1" />
                 <!-- icp param-->
                 <param name="regular_method" value="NORMALIZED_MIN_EIG" />
                 <param name="gicp_numthreads" value="4" />
@@ -82,7 +75,7 @@
 
                 <param name="use_global_localization" value="$(arg use_global_localization)" />
                 <!-- 激光雷达类型：AIRY、MID360 -->
-                <param name="lidar_type" value="MID360"/>
+                <param name="lidar_type" value="AIRY"/>
                 <!-- 自定义参数：点数滤波参数 -->
                 <param name="point_filter_num" type="int" value="2"/>
                 <!-- 自定义参数：半径滤波参数 -->
@@ -91,8 +84,9 @@
                 <!-- 自定义参数：发布的点云Z轴滤波范围m -->
                 <param name="z_filter_min" type="double" value="-0.3"/>
                 <param name="z_filter_max" type="double" value="20"/>
+
         </node>
 
         <node pkg="hdl_localization" type="plot_status.py" name="plot_estimation_errors" if="$(arg plot_estimation_errors)" />
-        <node name="rviz" pkg="rviz" type="rviz" args="-d $(find hdl_localization)/rviz/myhdl_localization.rviz" required="false" />
+        <node name="rviz" pkg="rviz" type="rviz" args="-d $(find hdl_localization)/rviz/myhdl_localization_airy.rviz" required="false" />
 </launch>

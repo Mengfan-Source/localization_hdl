@@ -34,8 +34,33 @@
 #include <hdl_global_localization/SetGlobalMap.h>
 #include <hdl_global_localization/QueryGlobalLocalization.h>
 #include <iostream>
-namespace hdl_localization {
+#include <Eigen/Core>
+#include <Eigen/Geometry>
 
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl/pcl_macros.h>
+#include <pcl_conversions/pcl_conversions.h>
+namespace airy_ros {
+  struct EIGEN_ALIGN16 Point {
+      PCL_ADD_POINT4D;
+      float intensity;
+      std::uint16_t ring = 0;
+      double timestamp = 0;
+      std::uint8_t feature;
+      EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  };
+}  // namespace airy_ros
+POINT_CLOUD_REGISTER_POINT_STRUCT(airy_ros::Point,
+    (float, x, x)
+    (float, y, y)
+    (float, z, z)
+    (float, intensity, intensity)
+    (std::uint16_t, ring, ring)
+    (double, timestamp, timestamp)
+    (std::uint8_t, feature, feature)
+)
+namespace hdl_localization {
 class HdlLocalizationNodelet : public nodelet::Nodelet {
         public:
         using PointT = pcl::PointXYZI;
@@ -52,7 +77,12 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 nh = getNodeHandle ();
                 mt_nh = getMTNodeHandle ();
                 private_nh = getPrivateNodeHandle ();
-
+                lidar_type = private_nh.param<std::string> ("lidar_type", "MID360");//自定义参数：激光雷达类型
+                point_filter_num = private_nh.param<int> ("point_filter_num", 2);//自定义参数：点数滤波参数
+                blind_min = private_nh.param<double> ("blind_min", 0.5);//自定义参数：半径滤波参数
+                blind_max = private_nh.param<double> ("blind_max", 20);
+                z_filter_min = private_nh.param<double> ("z_filter_min", -0.3);//自定义参数：发布的点云Z轴滤波范围min
+                z_filter_max = private_nh.param<double> ("z_filter_max", 20);//自定义参数：发布的点云Z轴滤波范围max
                 // NOTE1 初始化体素滤波器、点云匹配器、位姿增量估计器、起始位姿及其位姿估计器
                 initialize_params ();
 
@@ -176,6 +206,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 voxelgrid->setLeafSize (downsample_resolution, downsample_resolution, downsample_resolution);
                 downsample_filter = voxelgrid;
 
+
                 // NOTE 创建点云匹配器，并设置最大匹配迭代次数
                 NODELET_INFO ("create registration method for localization");
                 registration = create_registration ();
@@ -217,69 +248,90 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 std::lock_guard<std::mutex> lock (imu_data_mutex);
                 imu_data.push_back (imu_msg);
                 */
-               /*self自己写*/
-                float yaw_angle = 0;  // 90度逆时针偏航
-                float roll_angle = 0; // 45度横滚
-
-                // 生成绕Z轴的偏航旋转矩阵
-                Eigen::Matrix4d yaw_transform = Eigen::Matrix4d::Identity();
-                // yaw_transform(0, 0) = cos(yaw_angle);
-                // yaw_transform(0, 1) = -sin(yaw_angle);
-                // yaw_transform(1, 0) = sin(yaw_angle);
-                // yaw_transform(1, 1) = cos(yaw_angle);
-
-                // 生成绕X轴的横滚旋转矩阵
-                Eigen::Matrix4d roll_transform = Eigen::Matrix4d::Identity();
-                // roll_transform(1, 1) = cos(roll_angle);
-                // roll_transform(1, 2) = -sin(roll_angle);
-                // roll_transform(2, 1) = sin(roll_angle);
-                // roll_transform(2, 2) = cos(roll_angle);
-
-        // 组合旋转矩阵（先偏航再横滚）
-                Eigen::Matrix4d combined_transform = yaw_transform * roll_transform;
-                Eigen::Matrix3d rotation_matrix = combined_transform.block<3, 3>(0, 0);
-
-
-        // 将IMU的加速度、角速度转换为Eigen向量
-                // Eigen::Vector3d linear_acceleration(imu_msg->linear_acceleration.x*9.81, 
-                //                                 imu_msg->linear_acceleration.y*9.81, 
-                //                                 imu_msg->linear_acceleration.z*9.81);
-                Eigen::Vector3d linear_acceleration(imu_msg->linear_acceleration.x*1, 
-                                                imu_msg->linear_acceleration.y*1, 
-                                                imu_msg->linear_acceleration.z*1);
-
-                Eigen::Vector3d angular_velocity(imu_msg->angular_velocity.x, 
-                                        imu_msg->angular_velocity.y, 
-                                       imu_msg->angular_velocity.z);
-                Eigen::Vector3d transformed_linear_acceleration = rotation_matrix * linear_acceleration;
-                Eigen::Vector3d transformed_angular_velocity = rotation_matrix * angular_velocity;
                 sensor_msgs::Imu msg_out = *imu_msg  ;
-                msg_out.linear_acceleration.x = transformed_linear_acceleration.x();
-                msg_out.linear_acceleration.y = transformed_linear_acceleration.y();
-                msg_out.linear_acceleration.z = transformed_linear_acceleration.z();
+                if(lidar_type=="AIRY"){
+                        Eigen::Quaterniond q_lidar2imu(0.0029166745953261852,0.7073081731796265,-0.7068824768066406,0.004880243446677923);
+                        Eigen::Vector3d t_lidar2imu(0.0042, 0.0041, -0.0044);  
+                        Eigen::Isometry3d T_imu2lidar = Eigen::Isometry3d::Identity();
+                        T_imu2lidar.rotate(q_lidar2imu.toRotationMatrix().inverse());
+                        T_imu2lidar.pretranslate(-t_lidar2imu);
+                        Eigen::Vector3d acc_imu(imu_msg->linear_acceleration.x*9.81,imu_msg->linear_acceleration.y*9.81,imu_msg->linear_acceleration.z*9.81);
+                        Eigen::Vector3d gyro_imu(imu_msg->angular_velocity.x,imu_msg->angular_velocity.y,imu_msg->angular_velocity.z);
+                        Eigen::Vector3d acc_lidar = T_imu2lidar * acc_imu;
+                        Eigen::Vector3d gyro_lidar = T_imu2lidar * gyro_imu;
+                        msg_out.linear_acceleration.x = acc_lidar.x();
+                        msg_out.linear_acceleration.y = acc_lidar.y();
+                        msg_out.linear_acceleration.z = acc_lidar.z();
+                        msg_out.angular_velocity.x = gyro_lidar.x();
+                        msg_out.angular_velocity.y = gyro_lidar.y();
+                        msg_out.angular_velocity.z = gyro_lidar.z();
+                }
+                else if(lidar_type=="MID360"){
+                        float yaw_angle = 0;  // 90度逆时针偏航
+                        float roll_angle = 0; // 45度横滚
 
-                msg_out.angular_velocity.x = transformed_angular_velocity.x();
-                msg_out.angular_velocity.y = transformed_angular_velocity.y();
-                msg_out.angular_velocity.z = transformed_angular_velocity.z();
+                        // 生成绕Z轴的偏航旋转矩阵
+                        Eigen::Matrix4d yaw_transform = Eigen::Matrix4d::Identity();
+                        // yaw_transform(0, 0) = cos(yaw_angle);
+                        // yaw_transform(0, 1) = -sin(yaw_angle);
+                        // yaw_transform(1, 0) = sin(yaw_angle);
+                        // yaw_transform(1, 1) = cos(yaw_angle);
 
-                // 旋转四元数（表示方向），注意四元数需要规范化
-                Eigen::Quaterniond orientation(imu_msg->orientation.w, 
-                                                imu_msg->orientation.x, 
-                                                imu_msg->orientation.y, 
-                                                imu_msg->orientation.z);
-                
-                // 转换四元数到目标坐标系
-                Eigen::Quaterniond transformed_orientation = Eigen::Quaterniond(rotation_matrix) * orientation;
-                transformed_orientation.normalize();
+                        // 生成绕X轴的横滚旋转矩阵
+                        Eigen::Matrix4d roll_transform = Eigen::Matrix4d::Identity();
+                        // roll_transform(1, 1) = cos(roll_angle);
+                        // roll_transform(1, 2) = -sin(roll_angle);
+                        // roll_transform(2, 1) = sin(roll_angle);
+                        // roll_transform(2, 2) = cos(roll_angle);
 
-                msg_out.orientation.w = transformed_orientation.w();
-                msg_out.orientation.x = transformed_orientation.x();
-                msg_out.orientation.y = transformed_orientation.y();
-                msg_out.orientation.z = transformed_orientation.z();
+                // 组合旋转矩阵（先偏航再横滚）
+                        Eigen::Matrix4d combined_transform = yaw_transform * roll_transform;
+                        Eigen::Matrix3d rotation_matrix = combined_transform.block<3, 3>(0, 0);
+
+
+                // 将IMU的加速度、角速度转换为Eigen向量
+                        // Eigen::Vector3d linear_acceleration(imu_msg->linear_acceleration.x*9.81, 
+                        //                                 imu_msg->linear_acceleration.y*9.81, 
+                        //                                 imu_msg->linear_acceleration.z*9.81);
+                        Eigen::Vector3d linear_acceleration(imu_msg->linear_acceleration.x*1, 
+                                                        imu_msg->linear_acceleration.y*1, 
+                                                        imu_msg->linear_acceleration.z*1);
+
+                        Eigen::Vector3d angular_velocity(imu_msg->angular_velocity.x, 
+                                                imu_msg->angular_velocity.y, 
+                                        imu_msg->angular_velocity.z);
+                        Eigen::Vector3d transformed_linear_acceleration = rotation_matrix * linear_acceleration;
+                        Eigen::Vector3d transformed_angular_velocity = rotation_matrix * angular_velocity;
+                        
+                        msg_out.linear_acceleration.x = transformed_linear_acceleration.x();
+                        msg_out.linear_acceleration.y = transformed_linear_acceleration.y();
+                        msg_out.linear_acceleration.z = transformed_linear_acceleration.z();
+
+                        msg_out.angular_velocity.x = transformed_angular_velocity.x();
+                        msg_out.angular_velocity.y = transformed_angular_velocity.y();
+                        msg_out.angular_velocity.z = transformed_angular_velocity.z();
+
+                        // 旋转四元数（表示方向），注意四元数需要规范化
+                        Eigen::Quaterniond orientation(imu_msg->orientation.w, 
+                                                        imu_msg->orientation.x, 
+                                                        imu_msg->orientation.y, 
+                                                        imu_msg->orientation.z);
+                        
+                        // 转换四元数到目标坐标系
+                        Eigen::Quaterniond transformed_orientation = Eigen::Quaterniond(rotation_matrix) * orientation;
+                        transformed_orientation.normalize();
+
+                        msg_out.orientation.w = transformed_orientation.w();
+                        msg_out.orientation.x = transformed_orientation.x();
+                        msg_out.orientation.y = transformed_orientation.y();
+                        msg_out.orientation.z = transformed_orientation.z();
+
+                }
+                else{
+                        ROS_WARN("lidar type error,MID360 and AIRY supported");
+                }
                 sensor_msgs::ImuConstPtr imuout_ptr = boost::make_shared<sensor_msgs::Imu>(msg_out);
-
-
-               std::lock_guard<std::mutex> lock (imu_data_mutex);
+                std::lock_guard<std::mutex> lock (imu_data_mutex);
                 imu_data.push_back (imuout_ptr);
         }
 
@@ -288,6 +340,316 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
          * @param points_msg
          */
         void points_callback (const sensor_msgs::PointCloud2ConstPtr& points_msg) {
+                if(lidar_type=="AIRY"){
+                        std::lock_guard<std::mutex> estimator_lock (pose_estimator_mutex);
+                        if (!pose_estimator) {
+                                NODELET_ERROR ("waiting for initial pose input!!");
+                                return;
+                        }
+
+                        if (!globalmap) {
+                                NODELET_ERROR ("globalmap has not been received!!");
+                                return;
+                        }
+                        // ROS_WARN("run into airy handller 1");
+                        const auto& stamp = points_msg->header.stamp;
+                        pcl::PointCloud<airy_ros::Point>::Ptr pl_orig (new pcl::PointCloud<airy_ros::Point> ());
+                        pcl::fromROSMsg(*points_msg, *pl_orig);
+                        pcl::PointCloud<airy_ros::Point>::Ptr pl_orig_filtered(new pcl::PointCloud<airy_ros::Point>());
+                        // pcl::VoxelGrid<airy_ros::Point> sor_source;  
+                        // sor_source.setInputCloud(pl_orig);  
+                        // sor_source.setLeafSize(0.1f, 0.1f, 0.1f); // 设置体素的大小，这里是1cm  
+                        // sor_source.filter(*pl_orig_filtered);  
+                        // pl_orig_filtered->header = pl_orig->header;
+                        // ROS_WARN("run into airy handller 2");
+                        // int plsize = pl_orig_filtered->points.size();
+                        int plsize = pl_orig->points.size();
+                        if (plsize == 0) {
+                                ROS_WARN("size of input pointcloud is 0 ");
+                               return ; 
+                        }
+                        //点云配准使用的点
+                        pcl::PointCloud<PointT>::Ptr pcl_cloud (new pcl::PointCloud<PointT> ());
+                        pcl_cloud->reserve(plsize);
+                        //发布给导航用的点
+                        pcl::PointCloud<PointT>::Ptr pcl_cloud_pub (new pcl::PointCloud<PointT> ());
+                        pcl_cloud_pub->reserve(plsize);
+                        for(int i = 0;i<plsize;i++){
+                                PointT added_pt;
+                                added_pt.x = pl_orig->points[i].x;
+                                added_pt.y = pl_orig->points[i].y;
+                                added_pt.z = pl_orig->points[i].z;
+                                added_pt.intensity = pl_orig->points[i].intensity;
+                                if(i%point_filter_num == 0){
+                                        double dis_temp = added_pt.x*added_pt.x+added_pt.y*added_pt.y+added_pt.z*added_pt.z;
+                                        if(dis_temp > (blind_min * blind_min) && dis_temp < (blind_max*blind_max))
+                                                pcl_cloud->points.push_back(added_pt);
+                                        if(dis_temp > (blind_min * blind_min) && dis_temp < (blind_max*blind_max) && added_pt.z < z_filter_max && added_pt.z > z_filter_min)
+                                                pcl_cloud_pub->points.push_back(added_pt);
+                                }
+                        }
+                        pcl_cloud->header = pl_orig->header;
+                        pcl_cloud_pub->header =pl_orig->header;
+                        auto pcl_cloud_pub_filtered = downsample (pcl_cloud_pub);
+                        // 发布 ROS 点云消息
+                        sensor_msgs::PointCloud2 cloud_msg_out;
+                        pcl::toROSMsg(*pcl_cloud_pub, cloud_msg_out);
+                        cloud_msg_out.header.stamp = points_msg->header.stamp;
+                        cloud_msg_out.header.frame_id = points_msg->header.frame_id;  // 设置合适的坐标系
+                        my_pointpub.publish(cloud_msg_out);
+
+                        if (pcl_cloud->empty ()) {
+                                NODELET_ERROR ("cloud is empty!!");
+                                return;
+                        }
+                        // transform pointcloud into odom_child_frame_id
+                        // 将点云数据从雷达坐标系转到odom_child_frame_id坐标系
+                        pcl::PointCloud<PointT>::Ptr cloud (new pcl::PointCloud<PointT> ());
+                        if (!pcl_ros::transformPointCloud (odom_child_frame_id, *pcl_cloud, *cloud, this->tf_buffer)) {
+                                NODELET_ERROR ("point cloud cannot be transformed into target frame!!");
+                                return;
+                        }
+
+                        auto filtered = downsample (cloud);
+                        // auto filtered = cloud;
+                        last_scan = filtered;
+
+                        if (relocalizing) {
+                                delta_estimater->add_frame (filtered);
+                        }
+
+                        // NOTE 获取机器人位姿；开始时为初始位姿
+                        Eigen::Matrix4f before = pose_estimator->matrix ();
+                        // predict
+                        if (!use_imu) {
+                                // NOTE 刚开始预测处于冻结状态，只依靠NDT及观测模型
+                                pose_estimator->predict (stamp);
+                        }
+                        else {
+                                std::lock_guard<std::mutex> lock (imu_data_mutex);
+                                auto imu_iter = imu_data.begin ();
+                                for (imu_iter; imu_iter != imu_data.end (); imu_iter++) {
+                                        if (stamp < (*imu_iter)->header.stamp) {
+                                                break;
+                                        }
+                                        const auto& acc = (*imu_iter)->linear_acceleration;
+                                        const auto& gyro = (*imu_iter)->angular_velocity;
+                                        // std::cout << acc << std::endl;
+                                        // std::cout << gyro << std::endl;
+                                        double acc_sign = invert_acc ? -1.0 : 1.0;
+                                        double gyro_sign = invert_gyro ? -1.0 : 1.0;
+                                        // NODELET_INFO_STREAM("imu is used : " << gyro);
+                                        pose_estimator->predict ((*imu_iter)->header.stamp, acc_sign * Eigen::Vector3f (acc.x, acc.y, acc.z), gyro_sign * Eigen::Vector3f (gyro.x, gyro.y, gyro.z));
+                                }
+                                imu_data.erase (imu_data.begin (), imu_iter);
+                        }
+
+                        // odometry-based prediction
+                        ros::Time last_correction_time = pose_estimator->last_correction_time ();
+                        if (private_nh.param<bool> ("enable_robot_odometry_prediction", false) && !last_correction_time.isZero ()) {
+                                geometry_msgs::TransformStamped odom_delta;
+                                if (tf_buffer.canTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, stamp, robot_odom_frame_id, ros::Duration (0.1))) {
+                                        odom_delta = tf_buffer.lookupTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, stamp, robot_odom_frame_id, ros::Duration (0));
+                                }
+                                else if (tf_buffer.canTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, ros::Time (0), robot_odom_frame_id, ros::Duration (0))) {
+                                        odom_delta = tf_buffer.lookupTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, ros::Time (0), robot_odom_frame_id, ros::Duration (0));
+                                }
+
+                                if (odom_delta.header.stamp.isZero ()) {
+                                        NODELET_WARN_STREAM ("failed to look up transform between " << cloud->header.frame_id << " and " << robot_odom_frame_id);
+                                }
+                                else {
+                                        Eigen::Isometry3d delta = tf2::transformToEigen (odom_delta);
+                                        pose_estimator->predict_odom (delta.cast<float> ().matrix ());
+                                }
+                        }
+
+                        // correct
+                        auto aligned = pose_estimator->correct (stamp, filtered);
+                        if (registration->getFitnessScore () > 2.0) {
+                                //   NODELET_INFO_STREAM("gg, localization fail");
+                                std::cout << " match fail" << registration->getFitnessScore () << std::endl;
+                        }
+
+                        // if (aligned_pub.getNumSubscribers ()) {
+                        //         aligned->header.frame_id = "map1";
+                        //         aligned->header.stamp = cloud->header.stamp;
+                        //         aligned_pub.publish (aligned);
+                        // }
+
+                        if (status_pub.getNumSubscribers ()) {
+                                publish_scan_matching_status (points_msg->header, aligned);
+                        }
+
+                        publish_odometry (points_msg->header.stamp, pose_estimator->matrix ());
+                }
+                else if(lidar_type=="MID360"){
+                        std::lock_guard<std::mutex> estimator_lock (pose_estimator_mutex);
+                        if (!pose_estimator) {
+                                NODELET_ERROR ("waiting for initial pose input!!");
+                                return;
+                        }
+
+                        if (!globalmap) {
+                                NODELET_ERROR ("globalmap has not been received!!");
+                                return;
+                        }
+
+                        const auto& stamp = points_msg->header.stamp;
+
+                        pcl::PointCloud<PointT>::Ptr mypcl_cloud (new pcl::PointCloud<PointT> ());
+                        // pcl::PointCloud<PointT>::Ptr mytranspitchptr (new pcl::PointCloud<PointT> ());
+                        pcl::fromROSMsg (*points_msg, *mypcl_cloud);
+
+                        pcl::PointCloud<PointT>::Ptr mypcl_cloud_filtered(new pcl::PointCloud<PointT>());
+                        pcl::VoxelGrid<PointT> sor_source;  
+                        sor_source.setInputCloud(mypcl_cloud);  
+                        sor_source.setLeafSize(0.1f, 0.1f, 0.1f); // 设置体素的大小，这里是1cm  
+                        sor_source.filter(*mypcl_cloud_filtered);  
+
+
+                        float yaw_angle = 0;  // 90度逆时针偏航
+                        float roll_angle = 0; // 45度横滚
+
+                        // 生成绕Z轴的偏航旋转矩阵
+                        Eigen::Matrix4f yaw_transform = Eigen::Matrix4f::Identity();
+                        // yaw_transform(0, 0) = cos(yaw_angle);
+                        // yaw_transform(0, 1) = -sin(yaw_angle);
+                        // yaw_transform(1, 0) = sin(yaw_angle);
+                        // yaw_transform(1, 1) = cos(yaw_angle);
+
+                        // 生成绕X轴的横滚旋转矩阵
+                        Eigen::Matrix4f roll_transform = Eigen::Matrix4f::Identity();
+                        // roll_transform(1, 1) = cos(roll_angle);
+                        // roll_transform(1, 2) = -sin(roll_angle);
+                        // roll_transform(2, 1) = sin(roll_angle);
+                        // roll_transform(2, 2) = cos(roll_angle);
+
+                // 组合旋转矩阵（先偏航再横滚）
+                        Eigen::Matrix4f combined_transform = yaw_transform * roll_transform;
+                        pcl::PointCloud<PointT>::Ptr pcl_cloud1 (new pcl::PointCloud<PointT> ());
+                        pcl::transformPointCloud(*mypcl_cloud_filtered,*pcl_cloud1,  combined_transform);
+                //做半径滤波
+                        pcl::PointCloud<PointT>::Ptr pcl_cloud (new pcl::PointCloud<PointT> ());
+                        for(size_t i=0;i<pcl_cloud1->points.size();i++)
+                        {
+                        double dis_temp = pcl_cloud1->points[i].x*pcl_cloud1->points[i].x + pcl_cloud1->points[i].y*pcl_cloud1->points[i].y + pcl_cloud1->points[i].z*pcl_cloud1->points[i].z;
+                        if(dis_temp> 0.5*0.5 && dis_temp< 10*10)
+                        {
+                                pcl_cloud->points.push_back(pcl_cloud1->points[i]);
+                        }
+                        }
+                        // std::cout<<pcl_cloud->points.size()<<std::endl;
+                        pcl_cloud->header = pcl_cloud1->header;
+
+                        // 将变换后的点云发布到ROS话题
+                        sensor_msgs::PointCloud2 mycloud_msg;
+                        pcl::toROSMsg(*pcl_cloud, mycloud_msg);
+                        mycloud_msg.header.stamp = points_msg->header.stamp;
+                        mycloud_msg.header.frame_id = points_msg->header.frame_id;  // 设置合适的坐标系
+
+                        // 发布 ROS 点云消息
+                        my_pointpub.publish(mycloud_msg);
+   
+                        // pcl::fromROSMsg (*points_msg, *pcl_cloud);
+
+                        if (pcl_cloud->empty ()) {
+                                NODELET_ERROR ("cloud is empty!!");
+                                return;
+                        }
+                        // transform pointcloud into odom_child_frame_id
+                        // 将点云数据从雷达坐标系转到odom_child_frame_id坐标系
+                        pcl::PointCloud<PointT>::Ptr cloud (new pcl::PointCloud<PointT> ());
+                        //将mypcl_cloud点云转到odom_child_frame_id坐标系下（这里在launch文件中配置为lidar_link）
+                        // NODELET_INFO("before:");
+                        // NODELET_INFO(mypcl_cloud->header.frame_id.c_str());------>这里打印出来时lidar_link
+                        if (!pcl_ros::transformPointCloud (odom_child_frame_id, *mypcl_cloud, *cloud, this->tf_buffer)) {
+                                NODELET_ERROR ("point cloud cannot be transformed into target frame!!");
+                                return;
+                        }
+                        // NODELET_INFO("after:");
+                        // NODELET_INFO(cloud->header.frame_id.c_str());------>这里打印出来时lidar_link
+                        
+
+                        auto filtered = downsample (cloud);
+                        last_scan = filtered;
+
+                        if (relocalizing) {
+                                delta_estimater->add_frame (filtered);
+                        }
+
+                        // NOTE 获取机器人位姿；开始时为初始位姿
+                        Eigen::Matrix4f before = pose_estimator->matrix ();
+                        // predict
+                        if (!use_imu) {
+                                // NOTE 刚开始预测处于冻结状态，只依靠NDT及观测模型
+                                pose_estimator->predict (stamp);
+                        }
+                        else {
+                                std::lock_guard<std::mutex> lock (imu_data_mutex);
+                                auto imu_iter = imu_data.begin ();
+                                for (imu_iter; imu_iter != imu_data.end (); imu_iter++) {
+                                        if (stamp < (*imu_iter)->header.stamp) {
+                                                break;
+                                        }
+                                        const auto& acc = (*imu_iter)->linear_acceleration;
+                                        const auto& gyro = (*imu_iter)->angular_velocity;
+                                        // std::cout << acc << std::endl;
+                                        // std::cout << gyro << std::endl;
+                                        double acc_sign = invert_acc ? -1.0 : 1.0;
+                                        double gyro_sign = invert_gyro ? -1.0 : 1.0;
+                                        // NODELET_INFO_STREAM("imu is used : " << gyro);
+                                        pose_estimator->predict ((*imu_iter)->header.stamp, acc_sign * Eigen::Vector3f (acc.x, acc.y, acc.z), gyro_sign * Eigen::Vector3f (gyro.x, gyro.y, gyro.z));
+                                }
+                                imu_data.erase (imu_data.begin (), imu_iter);
+                        }
+
+                        // odometry-based prediction
+                        ros::Time last_correction_time = pose_estimator->last_correction_time ();
+                        if (private_nh.param<bool> ("enable_robot_odometry_prediction", false) && !last_correction_time.isZero ()) {
+                                geometry_msgs::TransformStamped odom_delta;
+                                //判断是否可以查询从last_correction_time时刻odom_child_frame_id到stamp时刻odom_child_frame_id之间的坐标变换关系，时间容错0.1，参考座标系robot_odom_frame_id
+                                if (tf_buffer.canTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, stamp, robot_odom_frame_id, ros::Duration (0.1))) {
+                                        //odom_delta代表在robot_odom_frame_id坐标系下（odom坐标系下），相邻时刻两个odom_child_frame_id的位姿变换关系
+                                        odom_delta = tf_buffer.lookupTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, stamp, robot_odom_frame_id, ros::Duration (0));
+                                }
+                                //判断是否可以查询从last_correction_time时刻odom_child_frame_id到最新时刻odom_child_frame_id之间的坐标变换关系，时间容错0.1，参考座标系robot_odom_frame_id
+                                else if (tf_buffer.canTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, ros::Time (0), robot_odom_frame_id, ros::Duration (0))) {
+                                        odom_delta = tf_buffer.lookupTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, ros::Time (0), robot_odom_frame_id, ros::Duration (0));
+                                }
+
+                                if (odom_delta.header.stamp.isZero ()) {
+                                        NODELET_WARN_STREAM ("failed to look up transform between " << cloud->header.frame_id << " and " << robot_odom_frame_id);
+                                }
+                                else {
+                                        Eigen::Isometry3d delta = tf2::transformToEigen (odom_delta);
+                                        pose_estimator->predict_odom (delta.cast<float> ().matrix ());
+                                }
+                        }
+
+                        // correct
+                        auto aligned = pose_estimator->correct (stamp, filtered);
+                        if (registration->getFitnessScore () > 5.0) {
+                                //   NODELET_INFO_STREAM("gg, localization fail");
+                                std::cout << " match fail" << registration->getFitnessScore () << std::endl;
+                        }
+
+                        // if (aligned_pub.getNumSubscribers ()) {
+                        //         aligned->header.frame_id = "map";
+                        //         aligned->header.stamp = cloud->header.stamp;
+                        //         aligned_pub.publish (aligned);
+                        // }
+
+                        if (status_pub.getNumSubscribers ()) {
+                                publish_scan_matching_status (points_msg->header, aligned);
+                        }
+
+                        publish_odometry (points_msg->header.stamp, pose_estimator->matrix ());
+
+                }
+                else{
+                        ROS_WARN("lidar type error,MID360 and AIRY supported");
+                }
                 /*原函数体
                 std::lock_guard<std::mutex> estimator_lock (pose_estimator_mutex);
                 if (!pose_estimator) {
@@ -389,175 +751,6 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
 
                 publish_odometry (points_msg->header.stamp, pose_estimator->matrix ());
                 */
-               /*self自己写*/
-                 std::lock_guard<std::mutex> estimator_lock (pose_estimator_mutex);
-                if (!pose_estimator) {
-                        NODELET_ERROR ("waiting for initial pose input!!");
-                        return;
-                }
-
-                if (!globalmap) {
-                        NODELET_ERROR ("globalmap has not been received!!");
-                        return;
-                }
-
-
-                const auto& stamp = points_msg->header.stamp;
-
-
-                pcl::PointCloud<PointT>::Ptr mypcl_cloud (new pcl::PointCloud<PointT> ());
-                // pcl::PointCloud<PointT>::Ptr mytranspitchptr (new pcl::PointCloud<PointT> ());
-                pcl::fromROSMsg (*points_msg, *mypcl_cloud);
-
-                pcl::PointCloud<PointT>::Ptr mypcl_cloud_filtered(new pcl::PointCloud<PointT>());
-                pcl::VoxelGrid<PointT> sor_source;  
-                sor_source.setInputCloud(mypcl_cloud);  
-                sor_source.setLeafSize(0.1f, 0.1f, 0.1f); // 设置体素的大小，这里是1cm  
-                sor_source.filter(*mypcl_cloud_filtered);  
-
-
-                float yaw_angle = 0;  // 90度逆时针偏航
-                float roll_angle = 0; // 45度横滚
-
-                // 生成绕Z轴的偏航旋转矩阵
-                Eigen::Matrix4f yaw_transform = Eigen::Matrix4f::Identity();
-                // yaw_transform(0, 0) = cos(yaw_angle);
-                // yaw_transform(0, 1) = -sin(yaw_angle);
-                // yaw_transform(1, 0) = sin(yaw_angle);
-                // yaw_transform(1, 1) = cos(yaw_angle);
-
-                // 生成绕X轴的横滚旋转矩阵
-                Eigen::Matrix4f roll_transform = Eigen::Matrix4f::Identity();
-                // roll_transform(1, 1) = cos(roll_angle);
-                // roll_transform(1, 2) = -sin(roll_angle);
-                // roll_transform(2, 1) = sin(roll_angle);
-                // roll_transform(2, 2) = cos(roll_angle);
-
-        // 组合旋转矩阵（先偏航再横滚）
-                Eigen::Matrix4f combined_transform = yaw_transform * roll_transform;
-                pcl::PointCloud<PointT>::Ptr pcl_cloud1 (new pcl::PointCloud<PointT> ());
-                pcl::transformPointCloud(*mypcl_cloud_filtered,*pcl_cloud1,  combined_transform);
-        //做半径滤波
-                pcl::PointCloud<PointT>::Ptr pcl_cloud (new pcl::PointCloud<PointT> ());
-                for(size_t i=0;i<pcl_cloud1->points.size();i++)
-                {
-                    double dis_temp = pcl_cloud1->points[i].x*pcl_cloud1->points[i].x + pcl_cloud1->points[i].y*pcl_cloud1->points[i].y + pcl_cloud1->points[i].z*pcl_cloud1->points[i].z;
-                    if(dis_temp> 0.5*0.5 && dis_temp< 10*10)
-                    {
-                        pcl_cloud->points.push_back(pcl_cloud1->points[i]);
-                    }
-                }
-                // std::cout<<pcl_cloud->points.size()<<std::endl;
-                pcl_cloud->header = pcl_cloud1->header;
-
-
-
-
-                // 将变换后的点云发布到ROS话题
-                sensor_msgs::PointCloud2 mycloud_msg;
-                pcl::toROSMsg(*pcl_cloud, mycloud_msg);
-                mycloud_msg.header.stamp = points_msg->header.stamp;
-                mycloud_msg.header.frame_id = points_msg->header.frame_id;  // 设置合适的坐标系
-
-                // 发布 ROS 点云消息
-                my_pointpub.publish(mycloud_msg);
-
-
-                
-                // pcl::fromROSMsg (*points_msg, *pcl_cloud);
-
-                if (pcl_cloud->empty ()) {
-                        NODELET_ERROR ("cloud is empty!!");
-                        return;
-                }
-                // transform pointcloud into odom_child_frame_id
-                // 将点云数据从雷达坐标系转到odom_child_frame_id坐标系
-                pcl::PointCloud<PointT>::Ptr cloud (new pcl::PointCloud<PointT> ());
-                //将mypcl_cloud点云转到odom_child_frame_id坐标系下（这里在launch文件中配置为lidar_link）
-                // NODELET_INFO("before:");
-                // NODELET_INFO(mypcl_cloud->header.frame_id.c_str());------>这里打印出来时lidar_link
-                if (!pcl_ros::transformPointCloud (odom_child_frame_id, *mypcl_cloud, *cloud, this->tf_buffer)) {
-                        NODELET_ERROR ("point cloud cannot be transformed into target frame!!");
-                        return;
-                }
-                // NODELET_INFO("after:");
-                // NODELET_INFO(cloud->header.frame_id.c_str());------>这里打印出来时lidar_link
-                
-
-                auto filtered = downsample (cloud);
-                last_scan = filtered;
-
-                if (relocalizing) {
-                        delta_estimater->add_frame (filtered);
-                }
-
-                // NOTE 获取机器人位姿；开始时为初始位姿
-                Eigen::Matrix4f before = pose_estimator->matrix ();
-                // predict
-                if (!use_imu) {
-                        // NOTE 刚开始预测处于冻结状态，只依靠NDT及观测模型
-                        pose_estimator->predict (stamp);
-                }
-                else {
-                        std::lock_guard<std::mutex> lock (imu_data_mutex);
-                        auto imu_iter = imu_data.begin ();
-                        for (imu_iter; imu_iter != imu_data.end (); imu_iter++) {
-                                if (stamp < (*imu_iter)->header.stamp) {
-                                        break;
-                                }
-                                const auto& acc = (*imu_iter)->linear_acceleration;
-                                const auto& gyro = (*imu_iter)->angular_velocity;
-                                // std::cout << acc << std::endl;
-                                // std::cout << gyro << std::endl;
-                                double acc_sign = invert_acc ? -1.0 : 1.0;
-                                double gyro_sign = invert_gyro ? -1.0 : 1.0;
-                                // NODELET_INFO_STREAM("imu is used : " << gyro);
-                                pose_estimator->predict ((*imu_iter)->header.stamp, acc_sign * Eigen::Vector3f (acc.x, acc.y, acc.z), gyro_sign * Eigen::Vector3f (gyro.x, gyro.y, gyro.z));
-                        }
-                        imu_data.erase (imu_data.begin (), imu_iter);
-                }
-
-                // odometry-based prediction
-                ros::Time last_correction_time = pose_estimator->last_correction_time ();
-                if (private_nh.param<bool> ("enable_robot_odometry_prediction", false) && !last_correction_time.isZero ()) {
-                        geometry_msgs::TransformStamped odom_delta;
-                        //判断是否可以查询从last_correction_time时刻odom_child_frame_id到stamp时刻odom_child_frame_id之间的坐标变换关系，时间容错0.1，参考座标系robot_odom_frame_id
-                        if (tf_buffer.canTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, stamp, robot_odom_frame_id, ros::Duration (0.1))) {
-                                //odom_delta代表在robot_odom_frame_id坐标系下（odom坐标系下），相邻时刻两个odom_child_frame_id的位姿变换关系
-                                odom_delta = tf_buffer.lookupTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, stamp, robot_odom_frame_id, ros::Duration (0));
-                        }
-                         //判断是否可以查询从last_correction_time时刻odom_child_frame_id到最新时刻odom_child_frame_id之间的坐标变换关系，时间容错0.1，参考座标系robot_odom_frame_id
-                        else if (tf_buffer.canTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, ros::Time (0), robot_odom_frame_id, ros::Duration (0))) {
-                                odom_delta = tf_buffer.lookupTransform (odom_child_frame_id, last_correction_time, odom_child_frame_id, ros::Time (0), robot_odom_frame_id, ros::Duration (0));
-                        }
-
-                        if (odom_delta.header.stamp.isZero ()) {
-                                NODELET_WARN_STREAM ("failed to look up transform between " << cloud->header.frame_id << " and " << robot_odom_frame_id);
-                        }
-                        else {
-                                Eigen::Isometry3d delta = tf2::transformToEigen (odom_delta);
-                                pose_estimator->predict_odom (delta.cast<float> ().matrix ());
-                        }
-                }
-
-                // correct
-                auto aligned = pose_estimator->correct (stamp, filtered);
-                if (registration->getFitnessScore () > 5.0) {
-                        //   NODELET_INFO_STREAM("gg, localization fail");
-                        std::cout << " match fail" << registration->getFitnessScore () << std::endl;
-                }
-
-                // if (aligned_pub.getNumSubscribers ()) {
-                //         aligned->header.frame_id = "map";
-                //         aligned->header.stamp = cloud->header.stamp;
-                //         aligned_pub.publish (aligned);
-                // }
-
-                if (status_pub.getNumSubscribers ()) {
-                        publish_scan_matching_status (points_msg->header, aligned);
-                }
-
-                publish_odometry (points_msg->header.stamp, pose_estimator->matrix ());
         }
 
 
@@ -671,6 +864,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
 
                 return filtered;
         }
+
 
         /**
          * @brief publish odometry
@@ -789,6 +983,12 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
 
         std::string robot_odom_frame_id;
         std::string odom_child_frame_id;
+        std::string lidar_type; //自定义参数：雷达类型
+        int point_filter_num;//自定义参数：点数滤波参数
+        double blind_min;//自定义参数：半径滤波参数
+        double blind_max;//自定义参数：半径滤波参数
+        double z_filter_min;//自定义参数：发布的点云Z轴滤波范围min
+        double z_filter_max;//自定义参数：发布的点云Z轴滤波范围max
 
         bool use_imu;
         bool invert_acc;
