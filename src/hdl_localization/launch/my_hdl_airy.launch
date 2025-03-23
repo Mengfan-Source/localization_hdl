@@ -82,7 +82,7 @@
                 <param name="blind_min" type="double" value="0.5"/>
                 <param name="blind_max" type="double" value="20"/>
                 <!-- 自定义参数：发布的点云Z轴滤波范围m -->
-                <param name="z_filter_min" type="double" value="-0.3"/>
+                <param name="z_filter_min" type="double" value="-0.6"/>
                 <param name="z_filter_max" type="double" value="20"/>
 
         </node>

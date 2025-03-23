@@ -533,11 +533,11 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                         pcl::PointCloud<PointT>::Ptr pcl_cloud (new pcl::PointCloud<PointT> ());
                         for(size_t i=0;i<pcl_cloud1->points.size();i++)
                         {
-                        double dis_temp = pcl_cloud1->points[i].x*pcl_cloud1->points[i].x + pcl_cloud1->points[i].y*pcl_cloud1->points[i].y + pcl_cloud1->points[i].z*pcl_cloud1->points[i].z;
-                        if(dis_temp> 0.5*0.5 && dis_temp< 10*10)
-                        {
-                                pcl_cloud->points.push_back(pcl_cloud1->points[i]);
-                        }
+                                double dis_temp = pcl_cloud1->points[i].x*pcl_cloud1->points[i].x + pcl_cloud1->points[i].y*pcl_cloud1->points[i].y + pcl_cloud1->points[i].z*pcl_cloud1->points[i].z;
+                                if(dis_temp > (blind_min*blind_min) && dis_temp < (blind_max*blind_max) && pcl_cloud1->points[i].z > z_filter_min && pcl_cloud1->points[i].z < z_filter_max)
+                                {
+                                        pcl_cloud->points.push_back(pcl_cloud1->points[i]);
+                                }
                         }
                         // std::cout<<pcl_cloud->points.size()<<std::endl;
                         pcl_cloud->header = pcl_cloud1->header;
