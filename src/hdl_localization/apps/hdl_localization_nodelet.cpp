@@ -83,6 +83,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 blind_max = private_nh.param<double> ("blind_max", 20);
                 z_filter_min = private_nh.param<double> ("z_filter_min", -0.3);//自定义参数：发布的点云Z轴滤波范围min
                 z_filter_max = private_nh.param<double> ("z_filter_max", 20);//自定义参数：发布的点云Z轴滤波范围max
+                use_legodom = private_nh.param<int>("use_legodom",0);
                 // NOTE1 初始化体素滤波器、点云匹配器、位姿增量估计器、起始位姿及其位姿估计器
                 initialize_params ();
 
@@ -97,6 +98,10 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                         NODELET_INFO ("enable imu-based prediction");
                         // NOTE3 将IMU数据压入imu_data数据队列
                         imu_sub = mt_nh.subscribe ("/gpsimu_driver/imu_data", 256, &HdlLocalizationNodelet::imu_callback, this);
+                }
+                if(use_legodom){
+                        NODELET_INFO ("enable leg_odom");
+                        legodom_sub = mt_nh.subscribe("/leg_odom",1000,&HdlLocalizationNodelet::legodom_callback, this);
                 }
 
                 // NOTE4 订阅实时点云数据不断更新机器人位姿
@@ -243,6 +248,27 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
          * @brief callback for imu data
          * @param imu_msg
          */
+        void legodom_callback (const nav_msgs::OdometryConstPtr& msg_in){
+                if(pose_estimator){
+                        PoseEstimator::LegOdomPtr msg = std::make_shared<PoseEstimator::LegOdom>();
+                        msg->timestamp = msg_in->header.stamp.toSec();
+                        msg->pos.x() = msg_in->pose.pose.position.x;
+                        msg->pos.y() = msg_in->pose.pose.position.y;
+                        msg->pos.z() = msg_in->pose.pose.position.z;
+                        msg->q.x() = msg_in->pose.pose.orientation.x;
+                        msg->q.y() = msg_in->pose.pose.orientation.y;
+                        msg->q.z() = msg_in->pose.pose.orientation.z;
+                        msg->q.w() = msg_in->pose.pose.orientation.w; 
+                        std::lock_guard<std::mutex> lock (pose_estimator->leg_odom_mutex);
+                        pose_estimator->legodom_buffer.push_back(msg);
+                        if(pose_estimator->legodom_buffer.size()>500){
+                                pose_estimator->legodom_buffer.pop_front();
+                        }
+                }
+                else{
+                        std::cout<<"waiting for pose_estimator object"<<std::endl;
+                }
+        }
         void imu_callback (const sensor_msgs::ImuConstPtr& imu_msg) {
                 /* 原函数体
                 std::lock_guard<std::mutex> lock (imu_data_mutex);
@@ -504,7 +530,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                         pcl::PointCloud<PointT>::Ptr mypcl_cloud_filtered(new pcl::PointCloud<PointT>());
                         pcl::VoxelGrid<PointT> sor_source;  
                         sor_source.setInputCloud(mypcl_cloud);  
-                        sor_source.setLeafSize(0.1f, 0.1f, 0.1f); // 设置体素的大小，这里是1cm  
+                        sor_source.setLeafSize(0.2f, 0.2f, 0.2f); // 设置体素的大小，这里是1cm  
                         sor_source.filter(*mypcl_cloud_filtered);  
 
 
@@ -1001,6 +1027,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         ros::Publisher pose_pub;
         ros::Publisher aligned_pub;
         ros::Publisher status_pub;
+        ros::Subscriber legodom_sub;
 
           ros::Publisher my_pointpub;
 
@@ -1031,6 +1058,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         ros::ServiceClient set_global_map_service;
         ros::ServiceClient query_global_localization_service;
         ros::ServiceServer start_recolize_service;  // extra add
+        int use_legodom = 0;
 };
 }  // namespace hdl_localization
 

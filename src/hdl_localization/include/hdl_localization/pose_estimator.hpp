@@ -8,6 +8,7 @@
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
 #include <pcl/registration/registration.h>
+#include <deque>
 // extract add
 // #include <hdl_global_localization/hdl_global_localization.hpp>
 
@@ -28,6 +29,36 @@ class OdomSystem;
  */
 class PoseEstimator {
         public:
+        struct LegOdom{
+                LegOdom() = default;
+                LegOdom(double t_in,const Eigen::Vector3f& pos_in,const Eigen::Quaternionf &q_in){
+                        timestamp = t_in;
+                        pos = pos_in;
+                        q = q_in;
+                        twist_angular = Eigen::Vector3f::Zero();
+                        twist_linear = Eigen::Vector3f::Zero();
+                }
+                double timestamp = 0.0; //单位秒
+                Eigen::Vector3f pos;
+                Eigen::Quaternionf q; 
+                Eigen::Vector3f twist_linear;
+                Eigen::Vector3f twist_angular;
+        };
+        struct ObtainedOdom{
+                ObtainedOdom() = default;
+                ObtainedOdom(double t_in,const Eigen::Vector3f& pos_in,const Eigen::Quaternionf &q_in,double & score_in){
+                        timestamp = t_in;
+                        pos = pos_in;
+                        q = q_in;
+                        score = score_in;
+                }
+                double timestamp;//单位秒
+                Eigen::Vector3f pos;
+                Eigen::Quaternionf q; 
+                double score;
+        };
+        using LegOdomPtr = std::shared_ptr<LegOdom>;
+        using ObtainedOdomPtr = std::shared_ptr<ObtainedOdom>;
         using PointT = pcl::PointXYZI;
 
         /**
@@ -105,6 +136,15 @@ class PoseEstimator {
         boost::optional<Eigen::Matrix4f> odom_pred_error;//里程计预测误差
 
         pcl::Registration<PointT, PointT>::Ptr registration;
+
+        public:
+        std::deque<LegOdomPtr> legodom_buffer;
+        std::deque<ObtainedOdomPtr> obtained_buffer;
+        double last_lidar_time;
+        double lidar_time;
+        // int use_legodom = 0;
+        std::mutex leg_odom_mutex;
+        Eigen::Matrix4f temp_stable_state;
 };
 
 }  // namespace hdl_localization
