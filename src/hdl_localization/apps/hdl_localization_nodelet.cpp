@@ -41,6 +41,7 @@
 #include <pcl/point_types.h>
 #include <pcl/pcl_macros.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <deque>
 namespace airy_ros {
   struct EIGEN_ALIGN16 Point {
       PCL_ADD_POINT4D;
@@ -65,6 +66,37 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         public:
         using PointT = pcl::PointXYZI;
         FILE* pose_file = NULL;
+        struct LegOdom{
+
+                LegOdom() = default;
+                LegOdom(double t_in,const Eigen::Vector3f& pos_in,const Eigen::Quaternionf &q_in){
+                        timestamp = t_in;
+                        pos = pos_in;
+                        q = q_in;
+                        twist_angular = Eigen::Vector3f::Zero();
+                        twist_linear = Eigen::Vector3f::Zero();
+                }
+                double timestamp = 0.0; //单位秒
+                Eigen::Vector3f pos;
+                Eigen::Quaternionf q; 
+                Eigen::Vector3f twist_linear;
+                Eigen::Vector3f twist_angular;
+        };
+        struct ObtainedOdom{
+                ObtainedOdom() = default;
+                ObtainedOdom(double t_in,const Eigen::Vector3f& pos_in,const Eigen::Quaternionf &q_in,double & score_in){
+                        timestamp = t_in;
+                        pos = pos_in;
+                        q = q_in;
+                        score = score_in;
+                }
+                double timestamp;//单位秒
+                Eigen::Vector3f pos;
+                Eigen::Quaternionf q; 
+                double score;
+        };
+        using LegOdomPtr = std::shared_ptr<LegOdom>;
+        using ObtainedOdomPtr = std::shared_ptr<ObtainedOdom>;
 
         HdlLocalizationNodelet () : tf_buffer (), tf_listener (tf_buffer) {}
         virtual ~HdlLocalizationNodelet () {
@@ -83,6 +115,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 blind_max = private_nh.param<double> ("blind_max", 20);
                 z_filter_min = private_nh.param<double> ("z_filter_min", -0.3);//自定义参数：发布的点云Z轴滤波范围min
                 z_filter_max = private_nh.param<double> ("z_filter_max", 20);//自定义参数：发布的点云Z轴滤波范围max
+                use_legodom = private_nh.param<int>("use_legodom",0);
                 // NOTE1 初始化体素滤波器、点云匹配器、位姿增量估计器、起始位姿及其位姿估计器
                 initialize_params ();
 
@@ -98,7 +131,11 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                         // NOTE3 将IMU数据压入imu_data数据队列
                         imu_sub = mt_nh.subscribe ("/gpsimu_driver/imu_data", 256, &HdlLocalizationNodelet::imu_callback, this);
                 }
-
+                
+                if(use_legodom){
+                        NODELET_INFO ("enable leg_odom");
+                        legodom_sub = mt_nh.subscribe("/leg_odom",1000,&HdlLocalizationNodelet::legodom_callback, this);
+                }
                 // NOTE4 订阅实时点云数据不断更新机器人位姿
                 points_sub = mt_nh.subscribe ("/velodyne_points", 1, &HdlLocalizationNodelet::points_callback, this);
 
@@ -235,6 +272,22 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 this->pose_file = fopen (std::string(std::string(ROOT_DIR) +"data/pose.txt").c_str(), "w+");
                 if (this->pose_file == NULL) {
                         printf ("位姿保存文件未打开\n");
+                }
+        }
+        void legodom_callback (const nav_msgs::OdometryConstPtr& msg_in){
+                LegOdomPtr msg;
+                msg->timestamp = msg_in->header.stamp.toSec();
+                msg->pos.x() = msg_in->pose.pose.position.x;
+                msg->pos.y() = msg_in->pose.pose.position.y;
+                msg->pos.z() = msg_in->pose.pose.position.z;
+                msg->q.x() = msg_in->pose.pose.orientation.x;
+                msg->q.y() = msg_in->pose.pose.orientation.y;
+                msg->q.z() = msg_in->pose.pose.orientation.z;
+                msg->q.w() = msg_in->pose.pose.orientation.w; 
+                std::lock_guard<std::mutex> lock (leg_odom_mutex);
+                legodom_buffer.push_back(msg);
+                if(legodom_buffer.size()>500){
+                        legodom_buffer.pop_front();
                 }
         }
 
@@ -629,9 +682,76 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
 
                         // correct
                         auto aligned = pose_estimator->correct (stamp, filtered);
+                        last_lidar_time = lidar_time;
+                        lidar_time = points_msg->header.stamp.toSec();
                         if (registration->getFitnessScore () > 5.0) {
                                 //   NODELET_INFO_STREAM("gg, localization fail");
                                 std::cout << " match fail" << registration->getFitnessScore () << std::endl;
+                                if(use_legodom && legodom_buffer.size()>0 && is_start){
+                                        std::cout<<"using leg_odom"<<std::endl;
+                                        LegOdomPtr closest_odom = nullptr;
+                                        LegOdomPtr last_closest_odom = nullptr;
+                                        double min_diff = std::numeric_limits<double>::max();
+                                        double last_min_diff = std::numeric_limits<double>::max();
+                                        std::lock_guard<std::mutex> lock (leg_odom_mutex);
+                                        for(const auto& odom : legodom_buffer){
+                                                double diff = std::abs(odom->timestamp - lidar_time);
+                                                double last_diff = std::abs(odom->timestamp - last_lidar_time);
+                                                if(diff < min_diff){
+                                                        min_diff = diff;
+                                                        closest_odom = odom;
+                                                }
+                                                if(last_diff<last_min_diff){
+                                                        last_min_diff = last_diff;
+                                                        last_closest_odom = odom;
+                                                }
+                                        }
+                                        Eigen::Vector3f relative_pos = closest_odom->pos - last_closest_odom->pos; 
+                                        Eigen::Matrix3f relative_rot = last_closest_odom->q.toRotationMatrix().transpose() * closest_odom->q.toRotationMatrix();
+                                        Eigen::Matrix4f relative_mat = Eigen::Matrix4f::Identity();
+                                        relative_mat.block<3, 3> (0, 0) = relative_rot;
+                                        relative_mat.block<3, 1> (0, 3) = relative_pos;
+                                        ObtainedOdomPtr stable_pose = obtained_buffer.back();
+                                        Eigen::Matrix4f stable_mat = Eigen::Matrix4f::Identity();
+                                        stable_mat.block<3, 3> (0, 0) = stable_pose->q.toRotationMatrix();
+                                        stable_mat.block<3, 1> (0, 3) = stable_pose->pos;
+                                        Eigen::Matrix4f curent_state = stable_mat * relative_mat;
+                                        Eigen::Vector3f c_pos = curent_state.block<3,1>(0, 3);
+                                        Eigen::Quaternionf c_q(curent_state.block<3, 3>(0, 0));
+                                        pose_estimator.reset (new hdl_localization::PoseEstimator (
+                                                registration,
+                                                ros::Time::now (),
+                                                c_pos,
+                                                c_q,
+                                                private_nh.param<double> ("cool_time_duration", 0.5)));
+                                }
+                                else if(!use_legodom && is_start){
+                                        std::cout<<"relocalization using static align"<<std::endl;
+                                        ObtainedOdomPtr stable_state = obtained_buffer.back();
+                                        pose_estimator.reset (new hdl_localization::PoseEstimator (
+                                                registration,
+                                                ros::Time::now (),
+                                                stable_state->pos,
+                                                stable_state->q,
+                                                private_nh.param<double> ("cool_time_duration", 0.5)));
+                                
+                                }
+                                else{
+                                        std::cout<<"init pose from rviz is needed"<<std::endl;
+                                }
+                        }
+                        else{
+                                is_start = 1;
+                                ObtainedOdomPtr temp_state = std::make_shared<ObtainedOdom>();
+                                temp_state->pos = pose_estimator->pos();
+                                temp_state->q = pose_estimator->quat();
+                                temp_state->score = registration->getFitnessScore();
+                                temp_state->timestamp = points_msg->header.stamp.toSec();
+                                std::lock_guard<std::mutex> lock (obtained_state_mutex);
+                                obtained_buffer.push_back(temp_state);
+                                if(obtained_buffer.size()>50){
+                                        obtained_buffer.pop_front();
+                                }
                         }
 
                         // if (aligned_pub.getNumSubscribers ()) {
@@ -989,6 +1109,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         double blind_max;//自定义参数：半径滤波参数
         double z_filter_min;//自定义参数：发布的点云Z轴滤波范围min
         double z_filter_max;//自定义参数：发布的点云Z轴滤波范围max
+        int use_legodom;//自定义参数：是否使用leg_odom进行判断
 
         bool use_imu;
         bool invert_acc;
@@ -997,6 +1118,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         ros::Subscriber points_sub;
         ros::Subscriber globalmap_sub;
         ros::Subscriber initialpose_sub;
+        ros::Subscriber legodom_sub;
 
         ros::Publisher pose_pub;
         ros::Publisher aligned_pub;
@@ -1031,6 +1153,16 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         ros::ServiceClient set_global_map_service;
         ros::ServiceClient query_global_localization_service;
         ros::ServiceServer start_recolize_service;  // extra add
+
+        std::mutex leg_odom_mutex;
+        std::mutex obtained_state_mutex;
+        std::deque<LegOdomPtr> legodom_buffer;
+        std::deque<ObtainedOdomPtr> obtained_buffer;
+        double last_lidar_time;
+        double lidar_time;
+        bool is_start = 0;
+        
+
 };
 }  // namespace hdl_localization
 
