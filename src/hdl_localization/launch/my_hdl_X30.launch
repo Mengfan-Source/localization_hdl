@@ -33,7 +33,7 @@
                 <!--   <param name="globalmap_pcd" value="/home/xmf/WorkPlaces/catkin_ws/map/map.pcd" />-->
                 <!--<param name="globalmap_pcd" value="/home/cetc21/xmf/catkin_ws/fastlio2/src/PCD/scanszheng.pcd" />-->
                 <!-- <param name="globalmap_pcd" value="/home/xmf/xmf_slam/slam_test/log/scans_filted.pcd" /> -->
-                <param name="globalmap_pcd" value="/home/xmf/xmf_bags/fromX30/0508/outdoor/0508.pcd" />
+                <param name="globalmap_pcd" value="/home/xmf/xmf_bags/fromX30/0508/outdoor/0508_filtered.pcd" />
                 <param name="convert_utm_to_local" value="true" />
                 <param name="downsample_resolution" value="0.2" />
                 <!-- 0.2-->
@@ -92,7 +92,7 @@
                 <param name="z_filter_min" type="double" value="-0.6"/>
                 <param name="z_filter_max" type="double" value="20"/>
                 <!-- 是否使用leg_odom -->
-                <param name="use_legodom" type="int" value="0"/>
+                <param name="use_legodom" type="int" value="1"/>
         </node>
 
         <node pkg="hdl_localization" type="plot_status.py" name="plot_estimation_errors" if="$(arg plot_estimation_errors)" />

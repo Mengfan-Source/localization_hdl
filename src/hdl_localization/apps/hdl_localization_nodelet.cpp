@@ -275,7 +275,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 }
         }
         void legodom_callback (const nav_msgs::OdometryConstPtr& msg_in){
-                LegOdomPtr msg;
+                LegOdomPtr msg = std::make_shared<LegOdom>();
                 msg->timestamp = msg_in->header.stamp.toSec();
                 msg->pos.x() = msg_in->pose.pose.position.x;
                 msg->pos.y() = msg_in->pose.pose.position.y;
@@ -727,12 +727,13 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                                 }
                                 else if(!use_legodom && is_start){
                                         std::cout<<"relocalization using static align"<<std::endl;
-                                        ObtainedOdomPtr stable_state = obtained_buffer.back();
+                                        // ObtainedOdomPtr stable_state = obtained_buffer.back();
+
                                         pose_estimator.reset (new hdl_localization::PoseEstimator (
                                                 registration,
                                                 ros::Time::now (),
-                                                stable_state->pos,
-                                                stable_state->q,
+                                                temp_stable_state.pos,
+                                                temp_stable_state.q,
                                                 private_nh.param<double> ("cool_time_duration", 0.5)));
                                 
                                 }
@@ -742,16 +743,22 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                         }
                         else{
                                 is_start = 1;
-                                ObtainedOdomPtr temp_state = std::make_shared<ObtainedOdom>();
-                                temp_state->pos = pose_estimator->pos();
-                                temp_state->q = pose_estimator->quat();
-                                temp_state->score = registration->getFitnessScore();
-                                temp_state->timestamp = points_msg->header.stamp.toSec();
-                                std::lock_guard<std::mutex> lock (obtained_state_mutex);
-                                obtained_buffer.push_back(temp_state);
-                                if(obtained_buffer.size()>50){
-                                        obtained_buffer.pop_front();
-                                }
+                                // ObtainedOdomPtr temp_state = std::make_shared<ObtainedOdom>();
+                                // temp_state->pos = pose_estimator->pos();
+                                // temp_state->q = pose_estimator->quat();
+                                // temp_state->score = registration->getFitnessScore();
+                                // temp_state->timestamp = points_msg->header.stamp.toSec();
+                                // // std::lock_guard<std::mutex> lock (obtained_state_mutex);
+                                // obtained_buffer.emplace_back(temp_state);
+                                // if(obtained_buffer.size()>50){
+                                //         obtained_buffer.pop_front();
+                                // }
+
+                                temp_stable_state.pos = pose_estimator->pos();
+                                temp_stable_state.q = pose_estimator->quat();
+                                temp_stable_state.score = registration->getFitnessScore();
+                                temp_stable_state.timestamp = points_msg->header.stamp.toSec();
+
                         }
 
                         // if (aligned_pub.getNumSubscribers ()) {
@@ -1161,7 +1168,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         double last_lidar_time;
         double lidar_time;
         bool is_start = 0;
-        
+        ObtainedOdom temp_stable_state ;
 
 };
 }  // namespace hdl_localization
