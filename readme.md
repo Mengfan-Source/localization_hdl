@@ -40,3 +40,4 @@ roslaunch hdl_localization my_hdl_airy.launch
         - 由于在IMU回调函数中处理了外参和量纲，因此无需设置外参，将odom_child_frame_id设置为rslidar即可
 ### 20250529
 - 这是添加了z值搜索和体素金字塔搜索，没加leg_odom观测，但是还尚未测试，暂时存放在add_z_voxel_pyramid_search分支中
+- 在X30上测试通过，修改了全局地图加载未完成的就进入回调函数的bug

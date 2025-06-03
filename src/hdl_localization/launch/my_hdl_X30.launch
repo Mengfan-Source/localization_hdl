@@ -30,13 +30,7 @@
 
         <!-- globalmap_server_nodelet $(find hdl_localization)/data/cloudGlobal.pcd-->
         <node pkg="nodelet" type="nodelet" name="globalmap_server_nodelet" args="load hdl_localization/GlobalmapServerNodelet $(arg nodelet_manager)">
-                <!--   <param name="globalmap_pcd" value="/home/xmf/WorkPlaces/catkin_ws/map/map.pcd" />-->
-                <!--<param name="globalmap_pcd" value="/home/cetc21/xmf/catkin_ws/fastlio2/src/PCD/scanszheng.pcd" />-->
-                <!-- <param name="globalmap_pcd" value="/home/xmf/xmf_slam/slam_test/log/scans_filted.pcd" /> -->
-                <!-- <param name="globalmap_pcd" value="/home/xmf/xmf_catkin_ws/FASTLIO2_SAM_LC/map/map_filted.pcd" /> -->
                 <param name="globalmap_pcd" value="/home/xmf/xmf_bags/fromX30/0508/outdoor/0508.pcd" />
-                <!-- <param name="globalmap_pcd" value="/home/xmf/xmf_bags/fromX30/1104/map.pcd" /> -->
-                
                 <param name="convert_utm_to_local" value="true" />
                 <param name="downsample_resolution" value="0.2" />
                 <!-- 0.2-->

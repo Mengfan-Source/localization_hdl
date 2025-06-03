@@ -504,7 +504,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                                 return;
                         }
 
-                        if (!globalmap) {
+                        if (!globalmap || !is_map_loaded) {
                                 NODELET_ERROR ("globalmap has not been received!!");
                                 return;
                         }
@@ -824,7 +824,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
 
                 registration->setInputTarget (globalmap);
                 ndt_global_search->setInputTarget (globalmap);
-                
+                is_map_loaded = 1;
                 if (use_global_localization) {
                         NODELET_INFO ("set globalmap for global localization!");
                         hdl_global_localization::SetGlobalMap srv;
@@ -1107,6 +1107,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         pcl::PointCloud<PointT>::Ptr globalmap;
         pcl::PointCloud<PointT>::Ptr globalmap_10;
         pcl::PointCloud<PointT>::Ptr globalmap_5;
+        bool is_map_loaded = 0;
         pcl::Filter<PointT>::Ptr downsample_filter;
         pcl::Registration<PointT, PointT>::Ptr registration;
         // pcl::Registration<PointT, PointT>::Ptr ndt_global_search;
