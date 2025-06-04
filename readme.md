@@ -40,4 +40,5 @@ roslaunch hdl_localization my_hdl_airy.launch
         - 由于在IMU回调函数中处理了外参和量纲，因此无需设置外参，将odom_child_frame_id设置为rslidar即可
 ### 20250603
 - 添加leg_odom观测支持，并兼容无leg_odom观测支持(其他局部稳定观测也可接入)。
-    -1.在pose_estimator部分添加功能代码，当激光配准误差较大时，采用leg_odom的增量与上一次合理配准值的和作为新的观测值
+    - 1.在pose_estimator部分添加功能代码，当激光配准误差较大时，采用leg_odom的增量与上一次合理配准值的和作为新的观测值
+    - 2.经过测试初步满足功能要求保留分支
