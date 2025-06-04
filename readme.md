@@ -38,3 +38,15 @@ roslaunch hdl_localization my_hdl_airy.launch
     - 3.(HDL没有运动畸变去除操作，因此这个操作并未设置)一帧激光雷达中每个点偏移时间与其他雷达不同，接入使用IMU数据进行激光雷达运动畸变去除的SLAM算法时，需要计算偏移量（减去第一点的偏移时间即可） 一帧数据中每个点的偏移时间与其他雷达不同，rs_lidar的偏移时间是运行时刻递增的，而不是一个单纯的偏移量，因此在接入使用IMU进行运动畸变去除的SLAM算法时需要将每个点的偏移时间设置为当前点的时间减去第一个点的相对时间。
     - 4.建立了针对airy激光雷达(airy雷达自带的IMU)，my_hdl_airy.launch
         - 由于在IMU回调函数中处理了外参和量纲，因此无需设置外参，将odom_child_frame_id设置为rslidar即可
+### 20250528
+- 备份稳定原始分支版本到no_init_no_legodom_use分支上     
+### 20250529
+- 在分支add_z_voxel_pyramid_search上操作，测试成功后合入main分支，原始稳定版本备份到no_init_no_legodom_use
+- 这是添加了z值搜索和体素金字塔搜索，没加leg_odom观测，但是还尚未测试，暂时存放在add_z_voxel_pyramid_search分支中
+- 在X30上测试通过，修改了全局地图加载未完成的就进入回调函数的bug
+- 只有添加了Z值搜索和体素金字塔搜索的版本，留作保留并合入main分支上
+### 20250603
+- 在分支add_leg_odom2上操作，测试成功后合入main分支。
+- 添加leg_odom观测支持，并兼容无leg_odom观测支持(其他局部稳定观测也可接入)。（无z值搜索和体素金字塔搜索）
+    - 1.在pose_estimator部分添加功能代码，当激光配准误差较大时，采用leg_odom的增量与上一次合理配准值的和作为新的观测值
+    - 2.经过测试初步满足功能要求保留分支，并合入main分支

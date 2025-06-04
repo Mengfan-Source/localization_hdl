@@ -203,32 +203,71 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct (const ros::T
         auto error_value = registration->getFitnessScore ();
         if (error_value > 5.0) {
                 std::cout << "fitness score" << error_value << std::endl;
+                if(legodom_buffer.size()>20){
+                        std::cout<<"relocalization using leg_odom"<<std::endl;
+                        std::lock_guard<std::mutex> lock (leg_odom_mutex);
+                        LegOdomPtr cur_element = legodom_buffer.back();
+                        LegOdomPtr last_element = legodom_buffer[legodom_buffer.size() - 20];
+                        Eigen::Vector3f relative_pos = cur_element->pos - last_element->pos;
+                        Eigen::Matrix3f relative_rot = last_element->q.toRotationMatrix().transpose() * cur_element->q.toRotationMatrix();
+                        Eigen::Matrix4f relative_mat = Eigen::Matrix4f::Identity();
+                        relative_mat.block<3, 3> (0, 0) = relative_rot;
+                        relative_mat.block<3, 1> (0, 3) = relative_pos;
+                        Eigen::Matrix4f trans_leg = temp_stable_state * relative_mat;
+                        Eigen::Vector3f p = trans_leg.block<3, 1> (0, 3);
+                        Eigen::Quaternionf q (trans_leg.block<3, 3> (0, 0));
+                        if (quat ().coeffs ().dot (q.coeffs ()) < 0.0f) {
+                                q.coeffs () *= -1.0f;
+                        }
+                        Eigen::VectorXf observation (7);
+                        observation.middleRows (0, 3) = p;
+                        observation.middleRows (3, 4) = Eigen::Vector4f (q.w (), q.x (), q.y (), q.z ());
+                        last_observation = trans_leg;
+                        ukf->correct (observation);   
+                        temp_stable_state = this->matrix (); 
+
+                }
+                else{
+                        std::cout<<"relocalization using static align"<<std::endl;
+                        Eigen::Vector3f p = temp_stable_state.block<3, 1> (0, 3);
+                        Eigen::Quaternionf q (temp_stable_state.block<3, 3> (0, 0));
+                        if (quat ().coeffs ().dot (q.coeffs ()) < 0.0f) {
+                                q.coeffs () *= -1.0f;
+                        }
+                        Eigen::VectorXf observation (7);
+                        observation.middleRows (0, 3) = p;
+                        observation.middleRows (3, 4) = Eigen::Vector4f (q.w (), q.x (), q.y (), q.z ());
+                        last_observation = temp_stable_state;
+                        ukf->correct (observation);
+                }
         }
-
-        Eigen::Vector3f p = trans.block<3, 1> (0, 3);
-        Eigen::Quaternionf q (trans.block<3, 3> (0, 0));
-        if (quat ().coeffs ().dot (q.coeffs ()) < 0.0f) {
-                q.coeffs () *= -1.0f;
-        }
-
-        Eigen::VectorXf observation (7);
-        observation.middleRows (0, 3) = p;
-        observation.middleRows (3, 4) = Eigen::Vector4f (q.w (), q.x (), q.y (), q.z ());
-        last_observation = trans;
-        //
-        auto result = registration->getFinalTransformation ();
-        // NOTE 上一帧预测与当前帧NDT匹配之后的位姿增量
-        wo_pred_error = no_guess.inverse () * result;
-
-        ukf->correct (observation);
-        imu_pred_error = imu_guess.inverse () * result;
-        if (odom_ukf) {
-                if (observation.tail<4> ().dot (odom_ukf->mean.tail<4> ()) < 0.0) {
-                        odom_ukf->mean.tail<4> () *= -1.0;
+        else{
+                Eigen::Vector3f p = trans.block<3, 1> (0, 3);
+                Eigen::Quaternionf q (trans.block<3, 3> (0, 0));
+                if (quat ().coeffs ().dot (q.coeffs ()) < 0.0f) {
+                        q.coeffs () *= -1.0f;
                 }
 
-                odom_ukf->correct (observation);
-                odom_pred_error = odom_guess.inverse () * result;
+                Eigen::VectorXf observation (7);
+                observation.middleRows (0, 3) = p;
+                observation.middleRows (3, 4) = Eigen::Vector4f (q.w (), q.x (), q.y (), q.z ());
+                last_observation = trans;
+                //
+                auto result = registration->getFinalTransformation ();
+                // NOTE 上一帧预测与当前帧NDT匹配之后的位姿增量
+                wo_pred_error = no_guess.inverse () * result;
+
+                ukf->correct (observation);
+                imu_pred_error = imu_guess.inverse () * result;
+                if (odom_ukf) {
+                        if (observation.tail<4> ().dot (odom_ukf->mean.tail<4> ()) < 0.0) {
+                                odom_ukf->mean.tail<4> () *= -1.0;
+                        }
+
+                        odom_ukf->correct (observation);
+                        odom_pred_error = odom_guess.inverse () * result;
+                }
+                temp_stable_state = this->matrix ();
         }
 
         return aligned;

@@ -41,6 +41,7 @@
 #include <pcl/point_types.h>
 #include <pcl/pcl_macros.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <execution>
 namespace airy_ros {
   struct EIGEN_ALIGN16 Point {
       PCL_ADD_POINT4D;
@@ -65,7 +66,11 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         public:
         using PointT = pcl::PointXYZI;
         FILE* pose_file = NULL;
-
+        struct GridSearchResult {
+            Eigen::Matrix4f pose_;
+            Eigen::Matrix4f result_pose_;
+            double score_ = 0.0;
+        };
         HdlLocalizationNodelet () : tf_buffer (), tf_listener (tf_buffer) {}
         virtual ~HdlLocalizationNodelet () {
                 fclose (this->pose_file);
@@ -83,6 +88,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 blind_max = private_nh.param<double> ("blind_max", 20);
                 z_filter_min = private_nh.param<double> ("z_filter_min", -0.3);//自定义参数：发布的点云Z轴滤波范围min
                 z_filter_max = private_nh.param<double> ("z_filter_max", 20);//自定义参数：发布的点云Z轴滤波范围max
+                use_legodom = private_nh.param<int>("use_legodom",0);
                 // NOTE1 初始化体素滤波器、点云匹配器、位姿增量估计器、起始位姿及其位姿估计器
                 initialize_params ();
 
@@ -97,6 +103,10 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                         NODELET_INFO ("enable imu-based prediction");
                         // NOTE3 将IMU数据压入imu_data数据队列
                         imu_sub = mt_nh.subscribe ("/gpsimu_driver/imu_data", 256, &HdlLocalizationNodelet::imu_callback, this);
+                }
+                if(use_legodom){
+                        NODELET_INFO ("enable leg_odom");
+                        legodom_sub = mt_nh.subscribe("/leg_odom",1000,&HdlLocalizationNodelet::legodom_callback, this);
                 }
 
                 // NOTE4 订阅实时点云数据不断更新机器人位姿
@@ -211,6 +221,15 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 NODELET_INFO ("create registration method for localization");
                 registration = create_registration ();
                 registration->setMaximumIterations (20);//500
+                {
+                        pclomp::NormalDistributionsTransform<PointT, PointT>::Ptr ndt_search (new pclomp::NormalDistributionsTransform<PointT, PointT> ());
+                        ndt_search->setTransformationEpsilon (0.01);
+                        ndt_search->setResolution (1.0);
+                        ndt_search->setNeighborhoodSearchMethod (pclomp::DIRECT1);
+                        ndt_search->setMaximumIterations (20);
+                        ndt_global_search = ndt_search;
+
+                }
                 NODELET_INFO_STREAM ("TransformationEpsilon" << registration->getTransformationEpsilon () << "max iteration" << registration->getMaximumIterations ());
 
                 // NOTE 初始化位姿增量估计器 (目前没有用到，需通过客户端发送服务进行重定位才用到)
@@ -243,6 +262,27 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
          * @brief callback for imu data
          * @param imu_msg
          */
+        void legodom_callback (const nav_msgs::OdometryConstPtr& msg_in){
+                if(pose_estimator){
+                        PoseEstimator::LegOdomPtr msg = std::make_shared<PoseEstimator::LegOdom>();
+                        msg->timestamp = msg_in->header.stamp.toSec();
+                        msg->pos.x() = msg_in->pose.pose.position.x;
+                        msg->pos.y() = msg_in->pose.pose.position.y;
+                        msg->pos.z() = msg_in->pose.pose.position.z;
+                        msg->q.x() = msg_in->pose.pose.orientation.x;
+                        msg->q.y() = msg_in->pose.pose.orientation.y;
+                        msg->q.z() = msg_in->pose.pose.orientation.z;
+                        msg->q.w() = msg_in->pose.pose.orientation.w; 
+                        std::lock_guard<std::mutex> lock (pose_estimator->leg_odom_mutex);
+                        pose_estimator->legodom_buffer.push_back(msg);
+                        if(pose_estimator->legodom_buffer.size()>500){
+                                pose_estimator->legodom_buffer.pop_front();
+                        }
+                }
+                else{
+                        std::cout<<"waiting for pose_estimator object"<<std::endl;
+                }
+        }
         void imu_callback (const sensor_msgs::ImuConstPtr& imu_msg) {
                 /* 原函数体
                 std::lock_guard<std::mutex> lock (imu_data_mutex);
@@ -490,7 +530,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                                 return;
                         }
 
-                        if (!globalmap) {
+                        if (!globalmap || !is_map_loaded) {
                                 NODELET_ERROR ("globalmap has not been received!!");
                                 return;
                         }
@@ -504,7 +544,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                         pcl::PointCloud<PointT>::Ptr mypcl_cloud_filtered(new pcl::PointCloud<PointT>());
                         pcl::VoxelGrid<PointT> sor_source;  
                         sor_source.setInputCloud(mypcl_cloud);  
-                        sor_source.setLeafSize(0.1f, 0.1f, 0.1f); // 设置体素的大小，这里是1cm  
+                        sor_source.setLeafSize(0.2f, 0.2f, 0.2f); // 设置体素的大小，这里是1cm  
                         sor_source.filter(*mypcl_cloud_filtered);  
 
 
@@ -752,8 +792,50 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 publish_odometry (points_msg->header.stamp, pose_estimator->matrix ());
                 */
         }
+        pcl::PointCloud<PointT>::Ptr myVoxelFilter(pcl::PointCloud<PointT>::Ptr cloud,float voxel_size = 0.1){
+                pcl::PointCloud<PointT>::Ptr cloud_filtered (new pcl::PointCloud<PointT>);
+                pcl::VoxelGrid<PointT> voxel;
+                voxel.setInputCloud (cloud);
+                voxel.setLeafSize (voxel_size, voxel_size, voxel_size);
+                voxel.filter (*cloud_filtered);
+                return cloud_filtered;
+        }
+
+        void AlignForGrid(GridSearchResult& gr){
+                pcl::PointCloud<PointT>::Ptr aligned_temp (new pcl::PointCloud<PointT> ());        
+                ndt_global_search->align (*aligned_temp, gr.pose_);
+                gr.result_pose_ = ndt_global_search->getFinalTransformation ();
+                gr.score_ = ndt_global_search->getFitnessScore ();
+                std::vector<int> res{10, 5, 2};
+                Eigen::Matrix4f T = gr.pose_;
+                for (auto& r : res) {
+                        if(r ==10){
+                                ndt_global_search->setInputTarget (globalmap_10);
+                                ndt_global_search->setResolution(r*1.0);
+                                ndt_global_search->align (*aligned_temp, T);
+                                T = ndt_global_search->getFinalTransformation ();
+                        }
+                        else if(r ==5){
+                                ndt_global_search->setInputTarget (globalmap_5);
+                                ndt_global_search->setResolution(r*1.0);
+                                ndt_global_search->align (*aligned_temp, T);
+                                T = ndt_global_search->getFinalTransformation ();
+                        }
+                        else if(r ==2){
+                                ndt_global_search->setInputTarget (globalmap);
+                                ndt_global_search->setResolution(r*1.0);
+                                ndt_global_search->align (*aligned_temp, T);
+                                T = ndt_global_search->getFinalTransformation ();
+                        }
+                }
+                gr.result_pose_ = ndt_global_search->getFinalTransformation ();
+                gr.score_ = ndt_global_search->getFitnessScore ();
+                std::cout<<"score: "<<gr.score_<<std::endl;
+                std::cout<<"init pose: "<<gr.pose_<<std::endl;
+                std::cout<<"result pose: "<<gr.result_pose_<<std::endl;
 
 
+        }
         /**
          * @brief callback for globalmap input  将地图点云压入匹配器的目标点云，并将地图点云发送到全局定位服务器
          * @param points_msg
@@ -763,9 +845,12 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 pcl::PointCloud<PointT>::Ptr cloud (new pcl::PointCloud<PointT> ());
                 pcl::fromROSMsg (*points_msg, *cloud);
                 globalmap = cloud;
+                globalmap_10 = myVoxelFilter(cloud, 1.0);
+                globalmap_5 = myVoxelFilter(cloud, 0.5);
 
                 registration->setInputTarget (globalmap);
-
+                ndt_global_search->setInputTarget (globalmap);
+                is_map_loaded = 1;
                 if (use_global_localization) {
                         NODELET_INFO ("set globalmap for global localization!");
                         hdl_global_localization::SetGlobalMap srv;
@@ -835,16 +920,48 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
          * @param pose_msg
          */
         void initialpose_callback (const geometry_msgs::PoseWithCovarianceStampedConstPtr& pose_msg) {
+                std::vector<GridSearchResult> search_poses;
                 NODELET_INFO ("initial pose received!!");
                 std::lock_guard<std::mutex> lock (pose_estimator_mutex);
                 const auto& p = pose_msg->pose.pose.position;
                 const auto& q = pose_msg->pose.pose.orientation;
-                pose_estimator.reset (new hdl_localization::PoseEstimator (
+                double z_range = 20,z_step = 1.0;
+                pcl::PointCloud<PointT>::Ptr cloud_use(new pcl::PointCloud<PointT>);
+                *cloud_use = *last_scan;
+                ndt_global_search->setInputSource(cloud_use);
+                for (double z_tmp = 0; z_tmp < z_range; z_tmp += z_step) {
+                        // SE3 pose(SO3::rotZ(ang * math::kDEG2RAD), Vec3d(0, 0, 0) + last_gnss_->utm_pose_.translation());
+                        Eigen::Matrix4f pose = Eigen::Matrix4f::Identity();
+                        Eigen::Vector3f translation(p.x, p.y, p.z+z_tmp);
+                        Eigen::Matrix3f rotation = Eigen::Quaternionf(q.w, q.x, q.y, q.z).toRotationMatrix();
+                        pose.block<3, 3>(0, 0) = rotation;
+                        pose.block<3, 1>(0, 3) = translation;
+                        GridSearchResult gr;
+                        gr.pose_ = pose;
+                        search_poses.emplace_back(gr);
+                }
+                for(GridSearchResult& gr : search_poses){
+                        AlignForGrid(gr);
+                }
+                auto min_ele = std::min_element(search_poses.begin(), search_poses.end(),[](const auto& g1, const auto& g2) { return g1.score_ < g2.score_; });
+                std::cout<<"score: "<<min_ele->score_<<std::endl;
+                std::cout<<"init pose: "<<min_ele->pose_<<std::endl;
+                std::cout<<"result pose: "<<min_ele->result_pose_<<std::endl;
+                if(min_ele->score_ < 5){
+                        pose_estimator.reset (new hdl_localization::PoseEstimator (
                         registration,
                         ros::Time::now (),
-                        Eigen::Vector3f (p.x, p.y, p.z),
-                        Eigen::Quaternionf (q.w, q.x, q.y, q.z),
-                        private_nh.param<double> ("cool_time_duration", 0.5)));
+                        Eigen::Vector3f (min_ele->result_pose_.block<3, 1>(0, 3)),
+                        Eigen::Quaternionf (min_ele->result_pose_.block<3, 3>(0, 0)),
+                        private_nh.param<double> ("cool_time_duration", 0.5)));     
+                }
+                // pose_estimator.reset (new hdl_localization::PoseEstimator (
+                //         registration,
+                //         ros::Time::now (),
+                //         Eigen::Vector3f (p.x, p.y, p.z),
+                //         Eigen::Quaternionf (q.w, q.x, q.y, q.z),
+                //         private_nh.param<double> ("cool_time_duration", 0.5))); 
+
         }
 
         /**
@@ -997,6 +1114,8 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         ros::Subscriber points_sub;
         ros::Subscriber globalmap_sub;
         ros::Subscriber initialpose_sub;
+        ros::Subscriber legodom_sub;
+
 
         ros::Publisher pose_pub;
         ros::Publisher aligned_pub;
@@ -1014,8 +1133,13 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
 
         // globalmap and registration method
         pcl::PointCloud<PointT>::Ptr globalmap;
+        pcl::PointCloud<PointT>::Ptr globalmap_10;
+        pcl::PointCloud<PointT>::Ptr globalmap_5;
+        bool is_map_loaded = 0;
         pcl::Filter<PointT>::Ptr downsample_filter;
         pcl::Registration<PointT, PointT>::Ptr registration;
+        // pcl::Registration<PointT, PointT>::Ptr ndt_global_search;
+        pclomp::NormalDistributionsTransform<PointT, PointT>::Ptr ndt_global_search;
 
         // pose estimator
         std::mutex pose_estimator_mutex;
@@ -1031,6 +1155,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         ros::ServiceClient set_global_map_service;
         ros::ServiceClient query_global_localization_service;
         ros::ServiceServer start_recolize_service;  // extra add
+        int use_legodom = 0;
 };
 }  // namespace hdl_localization
 
