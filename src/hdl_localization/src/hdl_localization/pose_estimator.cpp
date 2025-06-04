@@ -223,7 +223,8 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct (const ros::T
                         observation.middleRows (0, 3) = p;
                         observation.middleRows (3, 4) = Eigen::Vector4f (q.w (), q.x (), q.y (), q.z ());
                         last_observation = trans_leg;
-                        ukf->correct (observation);    
+                        ukf->correct (observation);   
+                        temp_stable_state = this->matrix (); 
 
                 }
                 else{
