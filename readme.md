@@ -39,4 +39,4 @@ roslaunch hdl_localization my_hdl_airy.launch
     - 4.建立了针对airy激光雷达(airy雷达自带的IMU)，my_hdl_airy.launch
         - 由于在IMU回调函数中处理了外参和量纲，因此无需设置外参，将odom_child_frame_id设置为rslidar即可
 ### 20250603
-- 添加leg_odom支持
+- 添加leg_odom支持(未测试，在外层融入，抛弃版本)
