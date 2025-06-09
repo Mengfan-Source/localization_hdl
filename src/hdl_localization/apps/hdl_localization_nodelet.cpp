@@ -88,7 +88,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 blind_max = private_nh.param<double> ("blind_max", 20);
                 z_filter_min = private_nh.param<double> ("z_filter_min", -0.3);//自定义参数：发布的点云Z轴滤波范围min
                 z_filter_max = private_nh.param<double> ("z_filter_max", 20);//自定义参数：发布的点云Z轴滤波范围max
-                use_legodom = private_nh.param<int>("use_legodom",0);
+                use_legodom = private_nh.param<bool>("use_legodom",false);
                 // NOTE1 初始化体素滤波器、点云匹配器、位姿增量估计器、起始位姿及其位姿估计器
                 initialize_params ();
 
@@ -1155,7 +1155,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         ros::ServiceClient set_global_map_service;
         ros::ServiceClient query_global_localization_service;
         ros::ServiceServer start_recolize_service;  // extra add
-        int use_legodom = 0;
+        bool use_legodom = false;
 };
 }  // namespace hdl_localization
 
