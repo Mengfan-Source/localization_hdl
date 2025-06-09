@@ -202,6 +202,13 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct (const ros::T
         Eigen::Matrix4f trans = registration->getFinalTransformation ();
         auto error_value = registration->getFitnessScore ();
         if (error_value > 5.0) {
+                if((this_pose-last_pose).norm()>3 || error_value > 5.0){
+                        exception_flag = true;
+                        std::cout<<"Localization error, stop immediately!!!!!!"<<std::endl;
+                }
+                else{
+                        exception_flag = false;
+                }
                 std::cout << "fitness score" << error_value << std::endl;
                 if(legodom_buffer.size()>20){
                         std::cout<<"relocalization using leg_odom"<<std::endl;
@@ -268,8 +275,10 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct (const ros::T
                         odom_pred_error = odom_guess.inverse () * result;
                 }
                 temp_stable_state = this->matrix ();
+                exception_flag = false;
         }
-
+        last_pose = this_pose;
+        this_pose = this->pos();
         return aligned;
 }
 

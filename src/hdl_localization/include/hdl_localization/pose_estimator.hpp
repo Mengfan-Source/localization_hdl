@@ -145,6 +145,9 @@ class PoseEstimator {
         // int use_legodom = 0;
         std::mutex leg_odom_mutex;
         Eigen::Matrix4f temp_stable_state;
+        bool exception_flag = false;
+        Eigen::Vector3f this_pose;
+        Eigen::Vector3f last_pose;
 };
 
 }  // namespace hdl_localization

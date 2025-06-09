@@ -42,6 +42,7 @@
 #include <pcl/pcl_macros.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <execution>
+#include <std_msgs/Bool.h>
 namespace airy_ros {
   struct EIGEN_ALIGN16 Point {
       PCL_ADD_POINT4D;
@@ -123,6 +124,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                 aligned_pub = nh.advertise<sensor_msgs::PointCloud2> ("/aligned_points", 5, false);
                 status_pub = nh.advertise<ScanMatchingStatus> ("/status", 5, false);
                 my_pointpub = nh.advertise<sensor_msgs::PointCloud2> ("/livox_points_transformed", 5, false);
+                exception_msg = nh.advertise<std_msgs::Bool>("/localization_status",10);
                 // NOTE8 全局重定位
                 use_global_localization = private_nh.param<bool> ("use_global_localization", true);
                 if (use_global_localization) {
@@ -685,6 +687,11 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
                         }
 
                         publish_odometry (points_msg->header.stamp, pose_estimator->matrix ());
+                        // if(pose_estimator->exception_flag){
+                                std_msgs::Bool msg;
+                                msg.data = pose_estimator->exception_flag;
+                                exception_msg.publish(msg);
+                        // }
 
                 }
                 else{
@@ -1122,6 +1129,7 @@ class HdlLocalizationNodelet : public nodelet::Nodelet {
         ros::Publisher status_pub;
 
           ros::Publisher my_pointpub;
+          ros::Publisher exception_msg;
 
         tf2_ros::Buffer tf_buffer;
         tf2_ros::TransformListener tf_listener;
