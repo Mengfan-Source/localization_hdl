@@ -28,7 +28,7 @@
 
         <!-- globalmap_server_nodelet $(find hdl_localization)/data/cloudGlobal.pcd-->
         <node pkg="nodelet" type="nodelet" name="globalmap_server_nodelet" args="load hdl_localization/GlobalmapServerNodelet $(arg nodelet_manager)">
-                <param name="globalmap_pcd" value="/home/xmf/xmf_slam/fast_lio_ws/src/PCD/scans_filted_0.1.pcd" />
+                <param name="globalmap_pcd" value="/home/xmf/xmf_slam/mapping_offline_test/data/mapdata/map_lidar.pcd" />
                 <param name="convert_utm_to_local" value="true" />
                 <param name="downsample_resolution" value="0.1" />
         </node>
